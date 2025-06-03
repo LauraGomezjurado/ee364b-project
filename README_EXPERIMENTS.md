@@ -7,23 +7,20 @@ This repository contains a comprehensive experiment suite for testing and analyz
 Get immediate results with these quick experiments:
 
 ```bash
-# Run the quick wins suite (your original ideas + more)
 python quick_wins.py
 
-# Run with custom iterations
 python quick_wins.py --iterations 5000
 
-# Launch interactive dashboard
 python interactive_dashboard.py
-# Then open http://localhost:8050 in your browser
+
 ```
 
-## 📁 New Files Overview
+##  New Files Overview
 
 ### Core Experiment Infrastructure
 - **`experiment_runner.py`** - Advanced experiment orchestrator with parallel execution
 - **`advanced_algorithms.py`** - FTL, OMD, and adaptive optimization variants
-- **`quick_wins.py`** - Immediate experiments you can run tonight
+- **`quick_wins.py`** - Immediate experiments to 
 - **`interactive_dashboard.py`** - Real-time web dashboard for monitoring
 
 ### Extended Environments

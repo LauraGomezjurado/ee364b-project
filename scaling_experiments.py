@@ -6,7 +6,7 @@ Test dual optimization on more complex environments:
 1. MazeWorld - Complex navigation with walls
 2. StochasticGridWorld - Stochastic transitions
 3. Scaling analysis across environment sizes
-4. DynamicGridWorld - Hazards change periodically
+4. DynamicGridWorld - Hazards change periodically (NOW WITH HOSTILE ALTERNATING HAZARDS)
 """
 
 import numpy as np
@@ -16,25 +16,23 @@ from tqdm import trange
 import argparse
 import time
 
-from envs import GridWorld, MazeWorld, StochasticGridWorld, DynamicGridWorld # Added DynamicGridWorld
+from envs import GridWorld, MazeWorld, StochasticGridWorld, DynamicGridWorld
 from dual_loop import expert_policy, solve_soft_q, rollout_policy
 from utils import collect_occupancy, DEF_GAMMA
 
+TAU_DYNAMIC_EXPERIMENT = 0.01
+
+# --- (Keep all run_..._experiment functions as they were in the last complete version) ---
 def run_maze_experiment():
-    """Test dual optimization on MazeWorld"""
+    # ... (content of run_maze_experiment, unchanged from your last full version) ...
     print("🏰 MazeWorld Experiment")
     print("   Complex navigation with walls and obstacles...")
     
-    env = MazeWorld(size=7) # Using default size 7 from envs.py
-    # Ensure expert_policy is compatible or MazeWorld has env.size attribute for collect_occupancy
-    # MazeWorld has self.size, so collect_occupancy(env, expert_policy,...) is fine.
+    env = MazeWorld(size=7)
     print(f"   Environment: {env.nS} states, {env.nA} actions")
     
     d_E = collect_occupancy(env, expert_policy, n_episodes=1000)
     
-    # Define safety constraint (avoid certain maze cells)
-    # In MazeWorld, unsafe_mask is already defined based on complexity.
-    # Let's use the env's predefined unsafe_mask.
     unsafe_idx = np.repeat(env.unsafe_mask, env.nA)
     c_unsafe = unsafe_idx.astype(float)
     
@@ -42,18 +40,17 @@ def run_maze_experiment():
     
     lam = np.zeros(env.nS * env.nA)
     mu = 0.0
-    avg_d = np.zeros_like(d_E) # For calculating average performance metrics over time
+    avg_d = np.zeros_like(d_E)
     
     history = defaultdict(list)
     
     for k in trange(1, 501, desc="MazeWorld optimization"):
         reward = -(lam + mu * c_unsafe)
         pi = solve_soft_q(env, reward, n_iter=100)
-        d_k = rollout_policy(env, pi) # Policy for current iter k
+        d_k = rollout_policy(env, pi)
         
-        avg_d = ((k-1)*avg_d + d_k) / k # Update running average
+        avg_d = ((k-1)*avg_d + d_k) / k
 
-        # Metrics based on avg_d
         f_val = np.sum((avg_d - d_E)**2)
         unsafe_prob = np.dot(avg_d, c_unsafe)
         constraint_violation = max(0, unsafe_prob - tau)
@@ -63,7 +60,6 @@ def run_maze_experiment():
         history["unsafe"].append(unsafe_prob)
         history["violation"].append(constraint_violation)
         
-        # Dual updates use d_k (current policy's occupancy)
         lam += 0.5 * 2*(d_k - d_E)
         mu = max(0.0, mu + 5.0 * (np.dot(d_k, c_unsafe) - tau))
         
@@ -73,22 +69,22 @@ def run_maze_experiment():
     return history
 
 def run_stochastic_experiment():
-    """Test dual optimization on StochasticGridWorld"""
+    # ... (content of run_stochastic_experiment, unchanged from your last full version) ...
     print("\n🎲 StochasticGridWorld Experiment")
     print("   Stochastic transitions with slip probability...")
     
-    slip_probs = [0.0, 0.1, 0.2] # Reduced for quicker run if needed
+    slip_probs = [0.0, 0.1, 0.2]
     results = {}
+    tau_stochastic = 0.05
     
     for slip_prob in slip_probs:
         print(f"   Testing slip probability: {slip_prob}")
         
-        env = StochasticGridWorld(slip=slip_prob, size=5) # Ensure size for expert_policy
+        env = StochasticGridWorld(slip=slip_prob, size=5)
         d_E = collect_occupancy(env, expert_policy, n_episodes=1000)
         
         unsafe_idx = np.repeat(env.unsafe_mask, env.nA)
         c_unsafe = unsafe_idx.astype(float)
-        tau = 0.05
         
         lam = np.zeros_like(d_E)
         mu = 0.0
@@ -111,39 +107,33 @@ def run_stochastic_experiment():
             history["unsafe"].append(unsafe_prob)
             
             lam += 1.0 * 2*(d_k - d_E)
-            mu = max(0.0, mu + 10.0 * (np.dot(d_k, c_unsafe) - tau))
+            mu = max(0.0, mu + 10.0 * (np.dot(d_k, c_unsafe) - tau_stochastic))
         
         results[slip_prob] = history
         final_f = history["f"][-1]
         final_unsafe = history["unsafe"][-1]
         print(f"     Final: f={final_f:.6f}, unsafe={final_unsafe:.4f}")
     
-    return results
+    return results, tau_stochastic
 
 def run_scaling_analysis():
-    """Analyze computational scaling with environment size"""
+    # ... (content of run_scaling_analysis, unchanged from your last full version) ...
     print("\n📈 Scaling Analysis")
     print("   Testing performance vs environment complexity...")
     
-    grid_sizes = [5, 7, 10]  # Different grid sizes, 15 can be slow
+    grid_sizes = [5, 7, 10]
     results = defaultdict(list)
     
-    for size in grid_sizes:
-        print(f"   Testing {size}x{size} grid...")
+    for size_val in grid_sizes:
+        print(f"   Testing {size_val}x{size_val} grid...")
         
-        env = GridWorld(size=size)
-        # The GridWorld constructor in envs.py correctly sets nS, nA based on size.
-        # Unsafe mask is also set, but let's redefine for scaling test consistency if needed.
-        # For this test, the default unsafe_mask from GridWorld(size=size) is fine.
+        env = GridWorld(size=size_val)
         
         start_time = time.time()
         
-        # Simplified expert policy for scaling test
-        def simple_expert(s, current_size): # Must accept size from collect_occupancy
-            # env is in scope here, but current_size is passed by collect_occupancy
+        def simple_expert(s, current_size):
             return np.random.randint(env.nA) 
         
-        # d_E for scaling test can be uniform or based on simple_expert
         d_E = collect_occupancy(env, simple_expert, n_episodes=100)
         
         unsafe_idx = np.repeat(env.unsafe_mask, env.nA)
@@ -153,15 +143,12 @@ def run_scaling_analysis():
         lam = np.zeros_like(d_E)
         mu = 0.0
         
-        for k_iter in range(1, 101): # Fixed iterations for timing
+        for k_iter in range(1, 101):
             reward = -(lam + mu * c_unsafe)
-            pi_flat = np.random.rand(env.nS * env.nA) # Simplified policy generation
-            pi = (pi_flat / pi_flat.sum(axis=0, keepdims=True)).reshape(env.nS, env.nA) # Dummy policy
-            # Correcting pi generation for scaling test:
             pi_rand = np.random.rand(env.nS, env.nA)
             pi = pi_rand / pi_rand.sum(axis=1, keepdims=True)
 
-            d_k_flat = np.random.rand(env.nS * env.nA) # Simplified rollout
+            d_k_flat = np.random.rand(env.nS * env.nA)
             d_k = d_k_flat / d_k_flat.sum()
             
             lam += 0.1 * 2*(d_k - d_E)
@@ -169,7 +156,7 @@ def run_scaling_analysis():
         
         elapsed_time = time.time() - start_time
         
-        results["size"].append(size)
+        results["size"].append(size_val)
         results["states"].append(env.nS)
         results["time"].append(elapsed_time)
         results["time_per_iter"].append(elapsed_time / 100)
@@ -179,17 +166,17 @@ def run_scaling_analysis():
     return results
 
 def run_environment_comparison():
-    """Compare performance across different environment types"""
-    print("\n🔄 Environment Type Comparison") # Renamed to avoid conflict
+    # ... (content of run_environment_comparison, unchanged from your last full version) ...
+    print("\n🔄 Environment Type Comparison")
     print("   Comparing convergence across environment types...")
     
     environments_setup = {
         "GridWorld": {"class": GridWorld, "args": {"size": 5}},
-        "MazeWorld": {"class": MazeWorld, "args": {"size": 7, "complexity": "medium"}}, # Maze default size is 7
+        "MazeWorld": {"class": MazeWorld, "args": {"size": 7, "complexity": "medium"}},
         "StochasticGridWorld": {"class": StochasticGridWorld, "args": {"size": 5, "slip": 0.1}}
     }
-    
     results = {}
+    tau_env_comp = 0.05
     
     for env_name, setup in environments_setup.items():
         print(f"   Testing {env_name}...")
@@ -199,7 +186,6 @@ def run_environment_comparison():
         
         unsafe_idx = np.repeat(env.unsafe_mask, env.nA)
         c_unsafe = unsafe_idx.astype(float)
-        tau = 0.05
         
         lam = np.zeros_like(d_E)
         mu = 0.0
@@ -222,7 +208,7 @@ def run_environment_comparison():
             history["unsafe"].append(unsafe_prob)
             
             lam += 1.0 * 2*(d_k - d_E)
-            mu = max(0.0, mu + 10.0 * (np.dot(d_k, c_unsafe) - tau))
+            mu = max(0.0, mu + 10.0 * (np.dot(d_k, c_unsafe) - tau_env_comp))
         
         results[env_name] = history
         final_f = history["f"][-1]
@@ -231,191 +217,223 @@ def run_environment_comparison():
     return results
 
 def run_dynamic_env_experiment():
-    """Test dual optimization on DynamicGridWorld"""
-    print("\n🌪️ DynamicGridWorld Experiment") # Changed icon
-    print("   Hazards change periodically...")
+    # ... (content of run_dynamic_env_experiment, unchanged from your last full version) ...
+    print("\n🌪️ DynamicGridWorld Experiment (Alternating Hostile Hazards)")
+    print("   Hazards change periodically between predefined hostile configurations.")
     
-    env = DynamicGridWorld(size=5, change_frequency=150) # Hazards change every 150 internal env steps
+    tau = TAU_DYNAMIC_EXPERIMENT
+    print(f"   Using safety threshold tau = {tau}")
+
+    env = DynamicGridWorld(size=5, change_frequency=200, hazard_mode="alternating_hostile")
+    env.total_agent_steps = 0 
+
     print(f"   Environment: {env.nS} states, {env.nA} actions, hazards change every {env.change_frequency} agent steps.")
     
-    # Expert policy aims for the goal, agnostic to dynamic hazards for d_E definition.
-    # Use a stable GridWorld of the same size to define d_E.
     static_env_for_expert = GridWorld(size=env.size)
     d_E = collect_occupancy(static_env_for_expert, expert_policy, n_episodes=1000)
     
-    tau = 0.05  # Safety threshold
-
     lam = np.zeros(env.nS * env.nA)
     mu = 0.0
     avg_d = np.zeros_like(d_E)
     
     history = defaultdict(list)
-    
-    # Store the hash/ID of the previous unsafe_mask configuration to detect changes.
-    # Using a sum of boolean mask as a simple ID. Could be more robust.
-    previous_unsafe_mask_id = np.sum(env.unsafe_mask) 
+    previous_unsafe_mask_tuple = tuple(np.where(env.unsafe_mask)[0])
 
-    for k in trange(1, 801, desc="DynamicWorld optimization"): # Run for more iterations
-        # IMPORTANT: Update c_unsafe based on the CURRENT state of env.unsafe_mask
-        current_unsafe_mask = env.unsafe_mask.copy() # Get current mask from env
-        unsafe_idx = np.repeat(current_unsafe_mask, env.nA)
-        c_unsafe_this_iter = unsafe_idx.astype(float) # Use this for reward and dual update
+    for k in trange(1, 1201, desc="Hostile DynamicWorld"): 
+        current_unsafe_mask_actual = env.unsafe_mask.copy() 
+        unsafe_idx = np.repeat(current_unsafe_mask_actual, env.nA)
+        c_unsafe_this_iter = unsafe_idx.astype(float)
 
-        current_unsafe_mask_id = np.sum(current_unsafe_mask)
-        hazard_config_changed_this_iter = (current_unsafe_mask_id != previous_unsafe_mask_id)
-        if hazard_config_changed_this_iter:
-            # print(f"Iter {k}: Hazard configuration changed. Old ID: {previous_unsafe_mask_id}, New ID: {current_unsafe_mask_id}")
-            # print(f"   New unsafe cells: {np.where(current_unsafe_mask)[0].tolist()}")
-            pass # Suppress print in loop for cleaner tqdm
-        previous_unsafe_mask_id = current_unsafe_mask_id
+        current_unsafe_mask_tuple = tuple(np.where(current_unsafe_mask_actual)[0])
+        hazard_config_changed_this_iter = (current_unsafe_mask_tuple != previous_unsafe_mask_tuple)
+        previous_unsafe_mask_tuple = current_unsafe_mask_tuple
 
-        # Policy player
-        reward = -(lam + mu * c_unsafe_this_iter) # Use c_unsafe for this iteration
-        pi = solve_soft_q(env, reward, n_iter=80) # env is DynamicGridWorld
-        
-        # Rollout policy. env.unsafe_mask can change *during* this rollout.
-        d_k = rollout_policy(env, pi, n_episodes=30) # Fewer episodes for faster iteration
-        
-        # Dual updates use c_unsafe_this_iter
+        reward = -(lam + mu * c_unsafe_this_iter)
+        pi = solve_soft_q(env, reward, n_iter=80) 
+        d_k = rollout_policy(env, pi, n_episodes=30) 
+                                                  
         lam_grad = 2 * (d_k - d_E)
-        mu_grad = np.dot(d_k, c_unsafe_this_iter) - tau
+        mu_constraint_value = np.dot(d_k, c_unsafe_this_iter) 
+        mu_grad_raw = mu_constraint_value - tau
         
         lam += 1.0 * lam_grad
-        mu = max(0.0, mu + 10.0 * mu_grad)
+        mu = max(0.0, mu + 10.0 * mu_grad_raw) 
         
         avg_d = ((k-1)*avg_d + d_k) / k
         
         f_val = np.sum((avg_d - d_E)**2)
-        # Safety w.r.t c_unsafe_this_iter (what the agent was trying to adhere to for this iter)
-        unsafe_prob_iter = np.dot(avg_d, c_unsafe_this_iter) 
+        unsafe_prob_avg = np.dot(avg_d, c_unsafe_this_iter) 
         
         history["iteration"].append(k)
         history["f"].append(f_val)
-        history["unsafe"].append(unsafe_prob_iter) # Log safety based on this iter's known constraints
+        history["unsafe_avg"].append(unsafe_prob_avg)
+        history["unsafe_instantaneous"].append(mu_constraint_value)
         history["mu"].append(mu)
-        history["hazard_config_changed"].append(1 if hazard_config_changed_this_iter else 0) # Store as 0 or 1
+        history["mu_grad_raw"].append(mu_grad_raw)
+        history["hazard_config_changed"].append(1 if hazard_config_changed_this_iter else 0)
         
-        if k % 100 == 0:
-            print(f"   k={k:4d}  f={f_val:.6f}  unsafe={unsafe_prob_iter:.4f}  μ={mu:.2f} Changed={hazard_config_changed_this_iter}")
-            if hazard_config_changed_this_iter:
-                 print(f"     Iter {k}: Hazard configuration changed. Unsafe cells: {np.where(current_unsafe_mask)[0].tolist()}")
+        if k % 50 == 0: 
+            print(f"   k={k:4d} f={f_val:.4f} unsafe_avg={unsafe_prob_avg:.4f} unsafe_inst={mu_constraint_value:.4f} μ={mu:.2f} μ_grad_raw={mu_grad_raw:.4f} Changed={hazard_config_changed_this_iter} UnsafeNow={current_unsafe_mask_tuple}")
     
-    return history
+    return history, tau
 
 
-def create_scaling_plots(maze_hist, stochastic_results, scaling_results, env_comparison_results, dynamic_results):
+# Helper function for moving average (for plotting only)
+def moving_average(data, window_size):
+    if not data or window_size <= 0:
+        return data
+    return np.convolve(data, np.ones(window_size)/window_size, mode='valid')
+
+def create_scaling_plots(maze_hist, stochastic_results_tuple, scaling_results_data, 
+                         env_comparison_results, dynamic_results_tuple,
+                         is_dynamic_test_only=False): # New flag
     """Create visualization plots for scaling experiments"""
     
-    fig, axes = plt.subplots(3, 2, figsize=(15, 18)) # Adjusted for 6 plots
-    fig.suptitle("Scaling Experiments: Performance and Robustness Analysis", fontsize=16)
+    stochastic_results, tau_stochastic = stochastic_results_tuple if stochastic_results_tuple else ({}, 0.05)
+    dynamic_results, tau_dynamic = dynamic_results_tuple if dynamic_results_tuple else (defaultdict(list), TAU_DYNAMIC_EXPERIMENT)
 
-    # MazeWorld convergence
-    ax = axes[0, 0]
-    if maze_hist:
-        ax.plot(maze_hist["iteration"], maze_hist["f"], 'b-', linewidth=2, label='Objective f')
-        ax.set_xlabel('Iteration')
-        ax.set_ylabel('Objective Value')
-        ax.set_title('MazeWorld Convergence')
-        ax.set_yscale('log')
-        ax.legend()
-    ax.grid(True, alpha=0.3)
-    
-    # MazeWorld constraint satisfaction
-    ax = axes[1, 0] # Moved to below MazeWorld convergence
-    if maze_hist:
-        ax.plot(maze_hist["iteration"], maze_hist["unsafe"], 'r-', linewidth=2, label='Unsafe Prob')
-        ax.axhline(y=0.1, color='k', linestyle='--', label='Threshold τ=0.1') # Maze tau is 0.1
-        ax.set_xlabel('Iteration')
-        ax.set_ylabel('Constraint Value (Unsafe)')
-        ax.set_title('MazeWorld Safety Constraint')
-        ax.legend()
-    ax.grid(True, alpha=0.3)
-    
-    # Stochastic environments - Objective
-    ax = axes[0, 1]
-    if stochastic_results:
-        for slip_prob, hist in stochastic_results.items():
-            ax.plot(hist["iteration"], hist["f"], linewidth=2, label=f'Slip={slip_prob}')
-    ax.set_xlabel('Iteration')
-    ax.set_ylabel('Objective Value')
-    ax.set_title('Stochastic Environments: Objective')
-    ax.set_yscale('log')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    
-    # Stochastic environments - Constraint
-    ax = axes[1, 1] # Moved to below Stochastic Objective
-    if stochastic_results:
-        for slip_prob, hist in stochastic_results.items():
-            ax.plot(hist["iteration"], hist["unsafe"], linewidth=2, label=f'Slip={slip_prob}')
-        ax.axhline(y=0.05, color='k', linestyle='--', label='Threshold τ=0.05') # Stochastic tau is 0.05
-    ax.set_xlabel('Iteration')
-    ax.set_ylabel('Unsafe Probability')
-    ax.set_title('Stochastic Environments: Safety')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    
-    # Computational scaling
-    ax = axes[2, 0] # Bottom left
-    if scaling_results and scaling_results["states"]:
-        states = np.array(scaling_results["states"])
-        times = np.array(scaling_results["time"])
-        ax.loglog(states, times, 'bo-', linewidth=2, label='Empirical Time')
-        if len(states) > 1:
-            log_states = np.log(states)
-            log_times = np.log(times)
-            slope = np.polyfit(log_states, log_times, 1)[0]
-            ax.loglog(states, np.exp(log_times[0] + slope * (log_states - log_states[0])), 'r--', 
-                      linewidth=2, label=f'Fit: O(N^{slope:.2f})')
-    ax.set_xlabel('Number of States (log scale)')
-    ax.set_ylabel('Computation Time (s) (log scale)')
-    ax.set_title('Computational Scaling Analysis')
-    ax.legend()
-    ax.grid(True, which="both", ls="-", alpha=0.3)
-    
-    # Dynamic Environment Performance
-    ax = axes[2, 1] # Bottom right
-    if dynamic_results:
-        ax.plot(dynamic_results["iteration"], dynamic_results["f"], 'm-', linewidth=2, label='Objective f (Dynamic)')
-        ax.set_xlabel('Iteration')
-        ax.set_ylabel('Objective Value (log scale)', color='m')
-        ax.tick_params(axis='y', labelcolor='m')
-        ax.set_title('DynamicGridWorld Performance')
-        ax.set_yscale('log')
-        ax.legend(loc='upper left')
+    if is_dynamic_test_only:
+        # Create a figure with 2 subplots, one above the other
+        fig, axes = plt.subplots(2, 1, figsize=(10, 12)) # Adjusted for 2 vertical plots
+        fig.suptitle("Dynamic Environment: Adaptive Safety Performance", fontsize=16)
+        ax_dynamic_detail = axes[0]
+        ax_dynamic_main = axes[1]
+    else:
+        # Original 3x2 layout
+        fig, axes_orig = plt.subplots(3, 2, figsize=(15, 18))
+        fig.suptitle("Scaling Experiments: Performance and Robustness Analysis", fontsize=16)
+        # --- Maze Plots (axes_orig[0,0] and axes_orig[1,0]) ---
+        # ... (maze plotting code as before, checking if maze_hist has data)
+        ax_maze_f = axes_orig[0,0]
+        if maze_hist and maze_hist["iteration"]:
+            ax_maze_f.plot(maze_hist["iteration"], maze_hist["f"], 'b-', linewidth=2, label='Objective f')
+            ax_maze_f.set_title('MazeWorld Convergence'); ax_maze_f.set_xlabel('Iteration'); ax_maze_f.set_ylabel('Objective Value'); ax_maze_f.set_yscale('log'); ax_maze_f.legend(); ax_maze_f.grid(True, alpha=0.3)
+        else:
+            ax_maze_f.text(0.5, 0.5, 'No Maze Data', ha='center', va='center', fontsize=9, bbox=dict(facecolor='white', alpha=0.5)); ax_maze_f.grid(True, alpha=0.3)
 
-        ax_twin = ax.twinx()
-        ax_twin.plot(dynamic_results["iteration"], dynamic_results["unsafe"], 'c-', linewidth=2, label='Unsafe Prob (Dynamic)')
-        ax_twin.axhline(y=0.05, color='k', linestyle=':', label='τ=0.05')
-        ax_twin.set_ylabel('Unsafe Probability', color='c')
-        ax_twin.tick_params(axis='y', labelcolor='c')
-        ax_twin.legend(loc='upper right')
+        ax_maze_s = axes_orig[1,0]
+        if maze_hist and maze_hist["iteration"]:
+            ax_maze_s.plot(maze_hist["iteration"], maze_hist["unsafe"], 'r-', linewidth=2, label='Unsafe Prob (Avg)')
+            ax_maze_s.axhline(y=0.1, color='k', linestyle='--', label='Threshold τ=0.1')
+            ax_maze_s.set_title('MazeWorld Safety'); ax_maze_s.set_xlabel('Iteration'); ax_maze_s.set_ylabel('Unsafe Prob'); ax_maze_s.legend(); ax_maze_s.grid(True, alpha=0.3)
+        else:
+            ax_maze_s.text(0.5, 0.5, 'No Maze Data', ha='center', va='center', fontsize=9, bbox=dict(facecolor='white', alpha=0.5)); ax_maze_s.grid(True, alpha=0.3)
+
+        # --- Stochastic Plots (axes_orig[0,1] and axes_orig[1,1]) ---
+        # ... (stochastic plotting code as before, checking for data)
+        ax_stoch_f = axes_orig[0,1]
+        if stochastic_results:
+            # ... (full stochastic objective plot)
+            has_data = any(hist.get("iteration") for hist in stochastic_results.values())
+            if has_data:
+                for slip_prob, hist in stochastic_results.items(): ax_stoch_f.plot(hist["iteration"], hist["f"], linewidth=2, label=f'Slip={slip_prob}')
+                ax_stoch_f.set_title('Stochastic Env: Objective'); ax_stoch_f.set_xlabel('Iteration'); ax_stoch_f.set_ylabel('Objective (log)'); ax_stoch_f.set_yscale('log'); ax_stoch_f.legend()
+            else: ax_stoch_f.text(0.5, 0.5, 'No Stochastic Data', ha='center', va='center', fontsize=9, bbox=dict(facecolor='white', alpha=0.5))
+        else: ax_stoch_f.text(0.5, 0.5, 'No Stochastic Data', ha='center', va='center', fontsize=9, bbox=dict(facecolor='white', alpha=0.5))
+        ax_stoch_f.grid(True, alpha=0.3)
+
+        ax_stoch_s = axes_orig[1,1]
+        if stochastic_results:
+            # ... (full stochastic safety plot)
+            has_data = any(hist.get("iteration") for hist in stochastic_results.values())
+            if has_data:
+                for slip_prob, hist in stochastic_results.items(): ax_stoch_s.plot(hist["iteration"], hist["unsafe"], linewidth=2, label=f'Slip={slip_prob}')
+                ax_stoch_s.axhline(y=tau_stochastic, color='k', linestyle='--', label=f'τ={tau_stochastic}')
+                ax_stoch_s.set_title('Stochastic Env: Safety'); ax_stoch_s.set_xlabel('Iteration'); ax_stoch_s.set_ylabel('Unsafe Prob'); ax_stoch_s.legend()
+            else: ax_stoch_s.text(0.5, 0.5, 'No Stochastic Data', ha='center', va='center', fontsize=9, bbox=dict(facecolor='white', alpha=0.5))
+        else: ax_stoch_s.text(0.5, 0.5, 'No Stochastic Data', ha='center', va='center', fontsize=9, bbox=dict(facecolor='white', alpha=0.5))
+        ax_stoch_s.grid(True, alpha=0.3)
         
-        # Mark hazard change points
-        change_iters = [dynamic_results["iteration"][i] for i, changed in enumerate(dynamic_results["hazard_config_changed"]) if changed and i > 0]
+        ax_dynamic_detail = axes_orig[2, 0] # Use bottom-left for dynamic details in full plot
+        ax_dynamic_main = axes_orig[2, 1]   # Use bottom-right for dynamic main in full plot
+
+    # --- Dynamic Environment Plots ---
+    if dynamic_results and dynamic_results["iteration"]:
+        iterations = dynamic_results["iteration"]
+        # Moving average for noisier plots
+        ma_window = 10 # Adjust window size as needed
+        mu_smoothed = moving_average(dynamic_results["mu"], ma_window)
+        mu_grad_raw_smoothed = moving_average(dynamic_results["mu_grad_raw"], ma_window)
+        unsafe_inst_smoothed = moving_average(dynamic_results["unsafe_instantaneous"], ma_window)
+        
+        # Adjust iterations for smoothed data due to 'valid' convolution mode
+        iter_smoothed_start = (ma_window -1) //2 
+        iter_smoothed_end = len(iterations) - (ma_window // 2)
+        if len(iterations) >= ma_window :
+             iter_smoothed = iterations[iter_smoothed_start : iter_smoothed_end] if ma_window % 2 == 1 else iterations[ma_window-1:]
+        else: # not enough data to smooth
+            iter_smoothed = iterations
+            mu_smoothed = dynamic_results["mu"] # use raw if not enough data
+            mu_grad_raw_smoothed = dynamic_results["mu_grad_raw"]
+            unsafe_inst_smoothed = dynamic_results["unsafe_instantaneous"]
+
+
+        # Plot 1: Mu and Mu Grad Raw (Dynamic Detail)
+        lns_mu1 = ax_dynamic_detail.plot(iter_smoothed, mu_smoothed, 'b-', linewidth=1.5, label='μ (Safety Dual, MA)')
+        ax_dynamic_detail.set_xlabel('Iteration')
+        ax_dynamic_detail.set_ylabel('μ Value', color='b')
+        ax_dynamic_detail.tick_params(axis='y', labelcolor='b')
+        ax_dynamic_detail.set_ylim(bottom=-0.05) # Ensure 0 is visible
+
+        ax_twin_detail = ax_dynamic_detail.twinx()
+        lns_mu2 = ax_twin_detail.plot(iter_smoothed, mu_grad_raw_smoothed, 'g--', linewidth=1.5, label='μ Grad Raw (MA)')
+        ax_twin_detail.set_ylabel('μ Grad Raw Value', color='g')
+        ax_twin_detail.tick_params(axis='y', labelcolor='g')
+        ax_twin_detail.axhline(y=0, color='k', linestyle=':', linewidth=1.0)
+        min_grad = min(mu_grad_raw_smoothed) if len(mu_grad_raw_smoothed)>0 else -0.01
+        max_grad = max(mu_grad_raw_smoothed) if len(mu_grad_raw_smoothed)>0 else 0.01
+        ax_twin_detail.set_ylim(min(min_grad*1.1, -0.01), max(max_grad*1.1, 0.01) if max_grad > 0 else 0.02)
+
+
+        lns_mu = lns_mu1 + lns_mu2
+        labs_mu = [l.get_label() for l in lns_mu]
+        ax_dynamic_detail.legend(lns_mu, labs_mu, loc='upper right', fontsize='small')
+        ax_dynamic_detail.set_title('Dynamic Env: Dual Variable Adaptation')
+        ax_dynamic_detail.grid(True, alpha=0.4, linestyle='--')
+
+        # Plot 2: Objective and Safety (Dynamic Main)
+        lns1 = ax_dynamic_main.plot(iterations, dynamic_results["f"], 'm-', linewidth=2, label='Objective f')
+        ax_dynamic_main.set_xlabel('Iteration')
+        ax_dynamic_main.set_ylabel('Objective Value (log scale)', color='m')
+        ax_dynamic_main.tick_params(axis='y', labelcolor='m')
+        ax_dynamic_main.set_yscale('log')
+
+        ax_twin_main = ax_dynamic_main.twinx()
+        lns2 = ax_twin_main.plot(iterations, dynamic_results["unsafe_avg"], 'c-', linewidth=2, label='Unsafe Prob (Avg)')
+        # Plot smoothed instantaneous unsafe probability for trend, raw for detail
+        lns3 = ax_twin_main.plot(iter_smoothed, unsafe_inst_smoothed, 'lime', linestyle='-', linewidth=1.0, alpha=0.7, label='Unsafe Prob (Inst., MA)')
+        # ax_twin_main.plot(iterations, dynamic_results["unsafe_instantaneous"], 'lime', linestyle=':', linewidth=0.5, alpha=0.5, label='_nolegend_') # Raw, very noisy
+        
+        ax_twin_main.axhline(y=tau_dynamic, color='k', linestyle='--', linewidth=1.2, label=f'τ={tau_dynamic}')
+        ax_twin_main.set_ylabel('Unsafe Probability')
+        ax_twin_main.set_ylim(-0.005, max(0.05, 1.5 * max(dynamic_results["unsafe_avg"] if dynamic_results["unsafe_avg"] else [0.01]))) # Adjust ylim based on data
+
+        change_iters = [iterations[i] for i, changed in enumerate(dynamic_results["hazard_config_changed"]) if changed and i > 0]
         for xc in change_iters:
-            ax.axvline(x=xc, color='gray', linestyle='--', linewidth=1, alpha=0.8)
-        if change_iters: # Add a dummy entry for legend
-             ax.plot([], [], color='gray', linestyle='--', label='Hazard Change')
-        ax.legend(loc='center left')
+            ax_dynamic_main.axvline(x=xc, color='gray', linestyle='--', linewidth=1, alpha=0.7)
+        
+        lns = lns1 + lns2 + lns3
+        if change_iters:
+            lns4_dummy = ax_dynamic_main.plot([], [], color='gray', linestyle='--', label='Hazard Change')[0]
+            lns.append(lns4_dummy)
+        labs = [l.get_label() for l in lns]
+        ax_dynamic_main.legend(lns, labs, loc='best', fontsize='small')
+        ax_dynamic_main.set_title('Dynamic Env: Performance & Safety')
 
+    else: # No dynamic results
+        if is_dynamic_test_only:
+            ax_dynamic_detail.text(0.5, 0.5, 'No Dynamic Data', ha='center', va='center', fontsize=9, bbox=dict(facecolor='white', alpha=0.5))
+            ax_dynamic_main.text(0.5, 0.5, 'No Dynamic Data', ha='center', va='center', fontsize=9, bbox=dict(facecolor='white', alpha=0.5))
+        # In full plot mode, the specific axes would show their individual "no data" messages if needed.
 
-    # Environment comparison (Plotting this separately or finding another spot)
-    # For now, remove env_comparison from this main plot to keep it 3x2
-    # if env_comparison_results:
-    #     ax_comp = fig.add_subplot(3,3,7) # Or another arrangement
-    #     for env_name, hist in env_comparison_results.items():
-    #         ax_comp.plot(hist["iteration"], hist["f"], linewidth=2, label=env_name)
-    #     ax_comp.set_xlabel('Iteration')
-    #     ax_comp.set_ylabel('Objective Value')
-    #     ax_comp.set_title('Environment Comparison')
-    #     ax_comp.set_yscale('log')
-    #     ax_comp.legend()
-    #     ax_comp.grid(True, alpha=0.3)
-    
-    plt.tight_layout(rect=[0, 0, 1, 0.96]) # Adjust rect to make space for suptitle
+    ax_dynamic_main.grid(True, alpha=0.4, linestyle='--')
+
+    if not is_dynamic_test_only: # If it's the full plot, finalize other axes too.
+         pass # Assuming they were handled above
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96] if not is_dynamic_test_only else [0,0,1,0.94]) # Adjust for suptitle
     plt.savefig('scaling_results.png', dpi=300, bbox_inches='tight')
-    # plt.show() # Usually called by the calling script.
+
 
 def main():
     parser = argparse.ArgumentParser(description="Scaling Beyond GridWorld")
@@ -426,57 +444,66 @@ def main():
     print("🚀 SCALING BEYOND GRIDWORLD")
     print("=" * 50)
     
-    maze_hist, stochastic_results, scaling_results_data, env_comp_results, dynamic_env_hist = None, None, None, None, None
+    maze_hist, stochastic_res_tuple, scaling_data, env_comp_res, dynamic_res_tuple = None, None, None, None, None
+    is_dynamic_only_run = (args.test == "dynamic")
 
     if args.test in ["maze", "all"]:
         maze_hist = run_maze_experiment()
-        
     if args.test in ["stochastic", "all"]:
-        stochastic_results = run_stochastic_experiment()
-        
+        stochastic_res_tuple = run_stochastic_experiment()
     if args.test in ["scaling", "all"]:
-        scaling_results_data = run_scaling_analysis()
-        
+        scaling_data = run_scaling_analysis()
     if args.test in ["comparison", "all"]:
-        env_comp_results = run_environment_comparison()
-
+        env_comp_res = run_environment_comparison()
     if args.test in ["dynamic", "all"]:
-        dynamic_env_hist = run_dynamic_env_experiment()
+        dynamic_res_tuple = run_dynamic_env_experiment()
             
-    if args.test == "all" or any([maze_hist, stochastic_results, scaling_results_data, env_comp_results, dynamic_env_hist]):
+    should_plot = (is_dynamic_only_run and dynamic_res_tuple and dynamic_res_tuple[0].get("iteration")) or \
+                  (args.test == "all" and any([
+                      maze_hist and maze_hist.get("iteration"),
+                      stochastic_res_tuple and stochastic_res_tuple[0], 
+                      scaling_data and scaling_data.get("states"),
+                      env_comp_res, 
+                      dynamic_res_tuple and dynamic_res_tuple[0].get("iteration")]))
+
+    if should_plot:
         print("\n📊 Creating scaling analysis plots...")
-        # Pass None if a specific test wasn't run
         create_scaling_plots(
             maze_hist if maze_hist else defaultdict(list), 
-            stochastic_results if stochastic_results else {}, 
-            scaling_results_data if scaling_results_data else defaultdict(list), 
-            env_comp_results if env_comp_results else {},
-            dynamic_env_hist if dynamic_env_hist else defaultdict(list)
+            stochastic_res_tuple, 
+            scaling_data if scaling_data else defaultdict(list), 
+            env_comp_res if env_comp_res else {},
+            dynamic_res_tuple,
+            is_dynamic_test_only=is_dynamic_only_run # Pass the flag
         )
         print("✅ Results saved to scaling_results.png")
-        plt.show() # Show plot after saving
+        plt.show()
+    else:
+        print("\n📊 No data to plot for the selected test(s) or test run was not 'dynamic' or 'all'.")
     
     print("\n🎉 Scaling experiments completed!")
     
-    if scaling_results_data and scaling_results_data["states"]:
-        states = np.array(scaling_results_data["states"])
-        times = np.array(scaling_results_data["time"])
-        if len(states) > 1 :
-            slope = np.polyfit(np.log(states), np.log(times), 1)[0]
+    # ... (Insights printing as before) ...
+    if scaling_data and scaling_data.get("states"):
+        states_arr = np.array(scaling_data["states"]) 
+        times_arr = np.array(scaling_data["time"])   
+        if len(states_arr) > 1 :
+            slope = np.polyfit(np.log(states_arr), np.log(times_arr), 1)[0]
             print(f"\n📊 INSIGHTS (Scaling):")
-            print(f"   Computational scaling: O(N^{slope:.2f}) where N is number of states.")
+            print(f"   Computational scaling (simplified test): O(N^{slope:.2f}) where N is number of states.")
 
-    if env_comp_results:
+    if env_comp_res:
         print("\n📊 INSIGHTS (Environment Comparison):")
         print("   Environment performance ranking (lower final objective is better):")
         final_objectives = {}
-        for env_name, hist in env_comp_results.items():
-            if hist["f"]:
-                 final_objectives[env_name] = hist["f"][-1]
+        for env_name_key, hist_val in env_comp_res.items(): 
+            if hist_val.get("f"):
+                 final_objectives[env_name_key] = hist_val["f"][-1]
         
         sorted_envs = sorted(final_objectives.items(), key=lambda x: x[1])
-        for i, (env_name, obj_val) in enumerate(sorted_envs, 1):
-            print(f"   {i}. {env_name}: {obj_val:.6f}")
+        for i, (env_name_key, obj_val) in enumerate(sorted_envs, 1):
+            print(f"   {i}. {env_name_key}: {obj_val:.6f}")
+
 
 if __name__ == "__main__":
     main()

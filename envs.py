@@ -14,26 +14,30 @@ class GridWorld(gym.Env):
 
     def __init__(self, size: int = 5, unsafe_cells=(12, 17), slip=0.0):
         super().__init__()
-        self.size, self.nS, self.nA = size, size * size, 4
+        self.size = size # Store size as an attribute
+        self.nS = size * size
+        self.nA = 4
         self.action_space  = spaces.Discrete(self.nA)
         self.observation_space = spaces.Discrete(self.nS)
 
         self.unsafe_mask = np.zeros(self.nS, dtype=bool)
-        self.unsafe_mask[list(unsafe_cells)] = True
-        self.goal = self.nS - 1
+        if unsafe_cells and self.nS > 0: # Ensure unsafe_cells can be applied
+            valid_unsafe_cells = [cell for cell in unsafe_cells if cell < self.nS]
+            self.unsafe_mask[list(valid_unsafe_cells)] = True
+            
+        self.goal = self.nS - 1 if self.nS > 0 else 0
         self.slip = slip
-        self._build_transition_matrix()
+        # self._build_transition_matrix() # Not strictly needed if not using self.P
 
-    #  core Gym API 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
-        self.s = 0                      # start top-left
-        return self.s, {}               # obs, info
+        self.s = 0
+        return self.s, {}
 
     def step(self, a):
         s = self.s
         if self.np_random.random() < self.slip:
-            a = self.np_random.integers(0, self.nA)      # random slip
+            a = self.np_random.integers(0, self.nA)
         r, terminated, truncated = 0.0, False, False
         s_ = self._next_state(s, a)
         if s_ == self.goal:
@@ -41,17 +45,15 @@ class GridWorld(gym.Env):
         self.s = s_
         return s_, r, terminated, truncated, {}
 
-
     def _next_state(self, s, a):
         row, col = divmod(s, self.size)
-        if   a == 0 and row > 0:            row -= 1       # UP
-        elif a == 1 and row < self.size-1:  row += 1       # DOWN
-        elif a == 2 and col > 0:            col -= 1       # LEFT
-        elif a == 3 and col < self.size-1:  col += 1       # RIGHT
+        if   a == 0 and row > 0:            row -= 1
+        elif a == 1 and row < self.size-1:  row += 1
+        elif a == 2 and col > 0:            col -= 1
+        elif a == 3 and col < self.size-1:  col += 1
         return row * self.size + col
 
     def _build_transition_matrix(self):
-        # (nS, nA, nS)   for exact occupancy check if wanted
         P = np.zeros((self.nS, self.nA, self.nS))
         for s in range(self.nS):
             for a in range(self.nA):
@@ -61,10 +63,6 @@ class GridWorld(gym.Env):
 
 
 class MazeWorld(gym.Env):
-    """
-    More complex maze environment with walls and multiple hazards.
-    Designed to test algorithm robustness in complex navigation scenarios.
-    """
     metadata = {"render_modes": ["ansi"]}
     
     def __init__(self, size: int = 7, complexity: str = "medium", slip: float = 0.0):
@@ -76,53 +74,53 @@ class MazeWorld(gym.Env):
         self.observation_space = spaces.Discrete(self.nS)
         self.slip = slip
         
-        # Create maze layout based on complexity
         self._create_maze_layout(complexity)
-        self.goal = self.nS - 1  # Bottom-right corner
+        self.goal = self.nS - 1
         
     def _create_maze_layout(self, complexity: str):
-        """Create maze with walls and hazards based on complexity level"""
         self.walls = set()
         self.unsafe_mask = np.zeros(self.nS, dtype=bool)
         
-        if complexity == "low":
-            # Simple maze with few walls
-            self.walls = {9, 16}  # Just a couple of walls
-            unsafe_cells = [10, 20]
-        elif complexity == "medium":
-            # Moderate complexity
-            self.walls = {8, 9, 15, 16, 22, 23, 29, 30}
-            unsafe_cells = [10, 17, 24, 31]
-        elif complexity == "high":
-            # Complex maze with many obstacles
-            self.walls = {7, 8, 9, 14, 16, 21, 23, 28, 30, 35, 37, 42}
-            unsafe_cells = [10, 11, 17, 18, 24, 25, 31, 32]
-        else:
-            raise ValueError(f"Unknown complexity: {complexity}")
-        
-        # Set unsafe cells
+        if self.size == 7: # Examples for a 7x7 grid
+            if complexity == "low":
+                self.walls = {9, 16, 30, 37}
+                unsafe_cells = [10, 24, 38]
+            elif complexity == "medium":
+                self.walls = {8, 9, 15, 16, 22, 23, 29, 30, 36, 37}
+                unsafe_cells = [10, 17, 24, 31, 38]
+            elif complexity == "high":
+                self.walls = {1, 2, 3, 8, 9, 10, 15, 17, 22, 24, 29, 31, 36, 38, 43, 44, 45}
+                unsafe_cells = [16, 23, 30, 37, 12, 19, 26, 33]
+            else:
+                raise ValueError(f"Unknown complexity: {complexity} for size {self.size}")
+        elif self.size == 5: # Fallback for 5x5 if MazeWorld is used with it
+             self.walls = {7,8,12,13}
+             unsafe_cells = [6, 11, 16]
+        else: # Generic, less interesting for other sizes
+            base_unsafe = [self.size + 2, 2 * self.size + 2]
+            unsafe_cells = [c for c in base_unsafe if c < self.nS -1]
+
+
         for cell in unsafe_cells:
-            if cell < self.nS:
+            if 0 <= cell < self.nS:
                 self.unsafe_mask[cell] = True
     
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
-        self.s = 0  # Start at top-left
+        self.s = 0
         return self.s, {}
     
     def step(self, a):
         s = self.s
-        
-        # Apply slip
         if self.np_random.random() < self.slip:
             a = self.np_random.integers(0, self.nA)
         
-        # Try to move
-        s_next = self._next_state(s, a)
+        s_next_candidate = self._next_state(s, a)
         
-        # Check if next state is a wall
-        if s_next in self.walls:
-            s_next = s  # Stay in place if hitting wall
+        if s_next_candidate in self.walls:
+            s_next = s
+        else:
+            s_next = s_next_candidate
         
         r, terminated, truncated = 0.0, False, False
         if s_next == self.goal:
@@ -132,20 +130,15 @@ class MazeWorld(gym.Env):
         return s_next, r, terminated, truncated, {}
     
     def _next_state(self, s, a):
-        """Calculate next state without considering walls"""
         row, col = divmod(s, self.size)
-        if   a == 0 and row > 0:            row -= 1       # UP
-        elif a == 1 and row < self.size-1:  row += 1       # DOWN
-        elif a == 2 and col > 0:            col -= 1       # LEFT
-        elif a == 3 and col < self.size-1:  col += 1       # RIGHT
+        if   a == 0 and row > 0:            row -= 1
+        elif a == 1 and row < self.size-1:  row += 1
+        elif a == 2 and col > 0:            col -= 1
+        elif a == 3 and col < self.size-1:  col += 1
         return row * self.size + col
 
 
 class StochasticGridWorld(gym.Env):
-    """
-    GridWorld with stochastic transitions and observation noise.
-    Tests algorithm robustness to uncertainty.
-    """
     metadata = {"render_modes": ["ansi"]}
     
     def __init__(self, size: int = 5, unsafe_cells=(12, 17), 
@@ -159,13 +152,15 @@ class StochasticGridWorld(gym.Env):
         self.observation_space = spaces.Discrete(self.nS)
         
         self.unsafe_mask = np.zeros(self.nS, dtype=bool)
-        self.unsafe_mask[list(unsafe_cells)] = True
-        self.goal = self.nS - 1
+        if unsafe_cells and self.nS > 0:
+            valid_unsafe_cells = [cell for cell in unsafe_cells if cell < self.nS]
+            self.unsafe_mask[list(valid_unsafe_cells)] = True
+
+        self.goal = self.nS - 1 if self.nS > 0 else 0
         
-        # Noise parameters
         self.slip = slip
-        self.noise = noise  # Observation noise
-        self.transition_noise = transition_noise  # Transition stochasticity
+        self.noise = noise
+        self.transition_noise = transition_noise
         
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
@@ -174,18 +169,14 @@ class StochasticGridWorld(gym.Env):
     
     def step(self, a):
         s = self.s
-        
-        # Action noise (slip)
         if self.np_random.random() < self.slip:
             a = self.np_random.integers(0, self.nA)
         
-        # Stochastic transitions
         intended_next = self._next_state(s, a)
         
         if self.np_random.random() < self.transition_noise:
-            # Random transition to adjacent state
             adjacent_states = self._get_adjacent_states(s)
-            s_next = self.np_random.choice(adjacent_states)
+            s_next = self.np_random.choice(adjacent_states) if adjacent_states else intended_next
         else:
             s_next = intended_next
         
@@ -194,14 +185,10 @@ class StochasticGridWorld(gym.Env):
             terminated, r = True, 1.0
         
         self.s = s_next
-        
-        # Add observation noise
         observed_state = self._add_observation_noise(s_next)
-        
         return observed_state, r, terminated, truncated, {}
     
     def _next_state(self, s, a):
-        """Deterministic next state calculation"""
         row, col = divmod(s, self.size)
         if   a == 0 and row > 0:            row -= 1
         elif a == 1 and row < self.size-1:  row += 1
@@ -210,32 +197,23 @@ class StochasticGridWorld(gym.Env):
         return row * self.size + col
     
     def _get_adjacent_states(self, s):
-        """Get all valid adjacent states"""
         adjacent = []
         row, col = divmod(s, self.size)
-        
-        # Check all four directions
         for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
             new_row, new_col = row + dr, col + dc
             if 0 <= new_row < self.size and 0 <= new_col < self.size:
                 adjacent.append(new_row * self.size + new_col)
-        
-        return adjacent if adjacent else [s]  # Return current state if no adjacent
+        return adjacent if adjacent else [s]
     
     def _add_observation_noise(self, true_state):
-        """Add noise to observations"""
         if self.np_random.random() < self.noise:
-            # Return a random nearby state
             adjacent = self._get_adjacent_states(true_state)
-            return self.np_random.choice(adjacent)
+            return self.np_random.choice(adjacent) if adjacent else true_state
         return true_state
 
 
 class MultiObjectiveGridWorld(gym.Env):
-    """
-    GridWorld with multiple objectives and constraints.
-    Useful for testing multi-constraint optimization.
-    """
+    # ... (content of MultiObjectiveGridWorld, unchanged) ...
     metadata = {"render_modes": ["ansi"]}
     
     def __init__(self, size: int = 6, unsafe_cells=(10, 15, 20), 
@@ -247,7 +225,6 @@ class MultiObjectiveGridWorld(gym.Env):
         self.action_space = spaces.Discrete(self.nA)
         self.observation_space = spaces.Discrete(self.nS)
         
-        # Different types of cells
         self.unsafe_mask = np.zeros(self.nS, dtype=bool)
         self.unsafe_mask[list(unsafe_cells)] = True
         
@@ -268,14 +245,13 @@ class MultiObjectiveGridWorld(gym.Env):
         s = self.s
         s_next = self._next_state(s, a)
         
-        # Multi-objective rewards
         r = 0.0
         if s_next == self.goal:
-            r += 10.0  # Goal reward
+            r += 10.0
         if self.reward_mask[s_next]:
-            r += 1.0   # Bonus reward
+            r += 1.0
         if self.penalty_mask[s_next]:
-            r -= 2.0   # Penalty
+            r -= 2.0
         
         terminated = (s_next == self.goal)
         truncated = False
@@ -294,12 +270,13 @@ class MultiObjectiveGridWorld(gym.Env):
 
 class DynamicGridWorld(gym.Env):
     """
-    GridWorld where hazards and rewards change over time.
-    Tests adaptation capabilities of algorithms.
+    GridWorld where hazards change over time.
+    MODIFIED for Alternating Hostile States.
     """
     metadata = {"render_modes": ["ansi"]}
     
-    def __init__(self, size: int = 5, change_frequency: int = 100):
+    def __init__(self, size: int = 5, change_frequency: int = 100,
+                 hazard_mode: str = "alternating_hostile"): # New parameter
         super().__init__()
         self.size = size
         self.nS = size * size
@@ -307,36 +284,73 @@ class DynamicGridWorld(gym.Env):
         self.action_space = spaces.Discrete(self.nA)
         self.observation_space = spaces.Discrete(self.nS)
         
-        self.change_frequency = change_frequency
-        self.step_count = 0
-        self.goal = self.nS - 1
+        self.change_frequency = change_frequency # This is agent steps, not outer loop iterations
+        self.total_agent_steps = 0 # Track total agent steps for hazard changes
+        self.goal = self.nS - 1 if self.nS > 0 else 0
         
-        # Initialize with random hazards
-        self._update_hazards()
+        self.hazard_mode = hazard_mode
+        self.current_hazard_config_index = 0 # For alternating mode
+
+        # Define hostile hazard configurations for a 5x5 grid
+        # These should ideally conflict with the expert path (R,R,R,R, D,D,D,D)
+        # Expert path states for 5x5: 0,1,2,3,4, 9,14,19,24 (goal)
+        if self.size == 5:
+            self.hostile_config_1 = [6, 11]  # (1,1), (2,1) - near start, forces deviation
+            self.hostile_config_2 = [18, 23] # (3,3), (4,3) - near goal, forces late deviation
+            # A config directly on the path
+            self.hostile_config_3 = [2, 9]   # (0,2) and (1,4) - directly on expert path
+        else: # Generic fallback if size is not 5
+            self.hostile_config_1 = [self.size + 1, self.size + 2]
+            self.hostile_config_2 = [self.nS - self.size - 2, self.nS - self.size - 3]
+            self.hostile_config_3 = [self.size//2, self.nS - self.size//2 -1]
+
+
+        self.unsafe_mask = np.zeros(self.nS, dtype=bool) # Initialized by _update_hazards
+        self._update_hazards() # Initial hazard setup
         
     def _update_hazards(self):
-        """Randomly update hazard locations"""
-        n_hazards = np.random.randint(2, 5)  # 2-4 hazards
-        hazard_locations = np.random.choice(
-            range(1, self.nS - 1),  # Exclude start and goal
-            size=n_hazards, 
-            replace=False
-        )
-        
-        self.unsafe_mask = np.zeros(self.nS, dtype=bool)
-        self.unsafe_mask[hazard_locations] = True
-        
+        """Update hazard locations based on hazard_mode."""
+        self.unsafe_mask.fill(False) # Clear previous hazards
+
+        if self.hazard_mode == "alternating_hostile":
+            if self.current_hazard_config_index == 0:
+                active_config = self.hostile_config_1
+            elif self.current_hazard_config_index == 1:
+                active_config = self.hostile_config_2
+            else: # self.current_hazard_config_index == 2
+                active_config = self.hostile_config_3
+            
+            valid_cells = [c for c in active_config if 0 <= c < self.nS]
+            if valid_cells:
+                self.unsafe_mask[valid_cells] = True
+            self.current_hazard_config_index = (self.current_hazard_config_index + 1) % 3 # Cycle through 3 configs
+            # print(f"Agent step {self.total_agent_steps}: Switched to hazard config {self.current_hazard_config_index}, unsafe: {np.where(self.unsafe_mask)[0]}")
+
+        elif self.hazard_mode == "random": # Original random behavior
+            n_hazards = self.np_random.integers(2, 5)
+            candidate_locations = [s for s in range(self.nS) if s != 0 and s != self.goal]
+            if candidate_locations and len(candidate_locations) >= n_hazards:
+                 hazard_locations = self.np_random.choice(
+                    candidate_locations,
+                    size=n_hazards, 
+                    replace=False
+                )
+                 self.unsafe_mask[hazard_locations] = True
+        else:
+            raise ValueError(f"Unknown hazard_mode: {self.hazard_mode}")
+            
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
         self.s = 0
-        self.step_count = 0
+        # self.total_agent_steps = 0 # Resetting agent steps on env.reset() might be too frequent if outer loop calls reset.
+                                 # Let total_agent_steps be persistent across episodes within one run_dynamic_env_experiment call.
+                                 # It's reset in run_dynamic_env_experiment itself before the main loop.
         return self.s, {}
     
     def step(self, a):
-        self.step_count += 1
+        self.total_agent_steps += 1
         
-        # Update hazards periodically
-        if self.step_count % self.change_frequency == 0:
+        if self.total_agent_steps > 0 and self.total_agent_steps % self.change_frequency == 0:
             self._update_hazards()
         
         s = self.s
@@ -345,6 +359,7 @@ class DynamicGridWorld(gym.Env):
         r, terminated, truncated = 0.0, False, False
         if s_next == self.goal:
             terminated, r = True, 1.0
+        # No penalty for hitting unsafe state in reward, handled by constraint
         
         self.s = s_next
         return s_next, r, terminated, truncated, {}

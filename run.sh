@@ -5,8 +5,8 @@
 python run_experiments.py --suite quick
 
 # Run specific experiment suites
-python run_experiments.py --suite stress
-python run_experiments.py --suite algorithms
+# python run_experiments.py --suite stress
+# python run_experiments.py --suite algorithms
 python run_experiments.py --suite theory
 python run_experiments.py --suite scaling
 
